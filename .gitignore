@@ -1,6 +1,6 @@
 ## SBT
 .cache
-.lib
+#.lib
 dist/*
 target
 lib_managed
