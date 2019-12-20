@@ -70,7 +70,7 @@ object IntervalHandler extends App {
 
     var prev_batch_timestamp: Long = 0
     val INF_TS = 2000000000
-    
+
     while (data.hasNext) {
       val newLine = data.next()
 
@@ -87,6 +87,7 @@ object IntervalHandler extends App {
       if ((timesAccum.size <= batchSize) && (data.hasNext)) {
         currentBatch += generateLLEInstances(newLine, mode)
       } else {
+        currentBatch += generateLLEInstances(newLine, mode)
         batchCount += 1
 
         //what is the use of this line?
