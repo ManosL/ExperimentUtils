@@ -6,20 +6,32 @@ package app
 
 object HLEInterval {
 
+  // For me if argument is absent the row has space
   def apply(hleLine: String) = {
     val split = hleLine.split("\\|")
     val hle = split(0)
+
+    /*
+    val yours_event_set = Set("adrift", "aground", "atAnchor", "atAnchorOrMoored", "gap",
+      "highSpeedNearCoast", "loitering", "lowSpeed", "maa", "moored", "speedGrThanMax", "tuggingSpeed",
+      "speedLessThanMin", "stopped", "travelSpeed", "trawling", "trawlSpeed", "underWay", "unusualSpeed")
+    */
+
+    val mine_hle_event_set = Set("highSpeedNC", "lowSpeed", "stopped", "proximity", "trawlingMovement",
+      "gap", "loitering", "changingSpeed", "tuggingSpeed", "trawling",
+      "anchoredOrMoored", "sarSpeed", "sar", "trawlSpeed", "underWay",
+      "movingSpeed", "drifting", "sarMovement", "pilotBoarding")
+
     // rendezVous, tugging
-    if (Set("adrift", "aground", "atAnchor", "atAnchorOrMoored", "gap",
-      "highSpeedNearCoast", "loitering", "lowSpeed", "maa", "moored", "speedGrThanMax",
-      "speedLessThanMin", "stopped", "travelSpeed", "trawling", "trawlSpeed", "underWay", "unusualSpeed").contains(hle)) {
+    if (mine_hle_event_set.contains(hle)) {
       val vessels = List(split(1))
-      val value = split(2)
-      val stime = split(3).toLong
-      val etime = split(4).toLong
+      val value = split(3)
+      val stime = split(4).toLong
+      val etime = split(5).toLong
       new HLEInterval(hle, vessels, value, stime, etime)
 
-    } else if (hle == "rendezVous" || hle == "tugging") {
+    } else if (hle == "rendezVous" || hle == "tugging"
+      || hle == "proximity" || hle == "pilotBoarding") {
       val vessels = List(split(1), split(2))
       val value = split(3)
       val stime = split(4).toLong
@@ -28,8 +40,8 @@ object HLEInterval {
 
     } else if (hle == "withinArea") {
       //withinArea|923166|fishing|true|1448977130|1448977242
-      val vessels = List(split(1))
-      val value = split(2)
+      val vessels = List(split(1), split(2))
+      val value = split(3)
       val stime = split(4).toLong
       val etime = split(5).toLong
       new HLEInterval(hle, vessels, value, stime, etime)

@@ -10,6 +10,7 @@ import data._
 import scala.collection.mutable.ListBuffer
 import scala.io.Source
 
+import java.time._
 // Reads data in this format:
 /*change_in_heading|1443694493|1443694493|245257000
 change_in_speed_start|1443890320|1443890320|259019000
@@ -30,17 +31,17 @@ object IntervalHandler extends App {
 
   // The path to the folder with RTEC results with HLE intervals. The generateIntervalTree
   // methdds reads from those files (see the method).
-  val pathToHLEIntervals = "/media/nkatz/storage/Brest-data-5-5-2018/results_critical"
+  val pathToHLEIntervals = "/home/manosl/Desktop/BSc Thesis/Datasets/IntervalHandlerInputDatasets/HLEs"
 
   // The path to the critical points (LLEs)
-  val pathToLLEs = "/media/nkatz/storage/Brest-data-5-5-2018/Datasets/dataset_RTEC_critical.csv"
+  val pathToLLEs = "/home/manosl/Desktop/BSc Thesis/Datasets/IntervalHandlerInputDatasets/LLEs.csv"
 
   println("Generating intervals tree...")
 
   val intervalTree =
     generateIntervalTree(
       pathToHLEIntervals,
-      List("rendezVous", "stopped", "lowSpeed")
+      List("rendezVous", "stopped", "lowSpeed", "proximity")
     )
 
   readDataIntoMiniBatches(pathToLLEs, 10, "rendezVous", "asp")
@@ -61,31 +62,52 @@ object IntervalHandler extends App {
     val data = Source.fromFile(dataPath).getLines.filter(x =>
       !x.startsWith("coord") && !x.startsWith("velocity") && !x.startsWith("entersArea") && !x.startsWith("leavesArea")
     )
+
     val currentBatch = new ListBuffer[String]
     var timesAccum = scala.collection.mutable.SortedSet[Long]()
     var llesAccum = scala.collection.mutable.SortedSet[String]()
     var batchCount = 0
+
+    var prev_batch_timestamp: Long = 0
+    val INF_TS = 2000000000
+    
     while (data.hasNext) {
       val newLine = data.next()
+
       val split = newLine.split("\\|")
       println(split.mkString(" "))
-      val time = split.last
-      val lle = split.head
+
+      val time = split(1)
+      val lle = split(0)
+
       if (!timesAccum.contains(time.toLong)) timesAccum += time.toLong
+
       if (!llesAccum.contains(lle)) llesAccum += lle
-      if (timesAccum.size <= batchSize) {
+
+      if ((timesAccum.size <= batchSize) && (data.hasNext)) {
         currentBatch += generateLLEInstances(newLine, mode)
       } else {
-
         batchCount += 1
-        val nexts = timesAccum.sliding(2).map(x => if (mode == "asp") s"next(${x.last},${x.head})" else s"next(${x.last},${x.head})")
-        val intervals = intervalTree.range(timesAccum.head, timesAccum.last)
 
-        val extras = timesAccum.flatMap{ timeStamp =>
-          val containedIn = intervals.filter(interval => interval._1 <= timeStamp && timeStamp <= interval._2)
+        //what is the use of this line?
+        val nexts = timesAccum.sliding(2).map(x => if (mode == "asp") s"next(${x.last},${x.head})" else s"next(${x.last},${x.head})")
+        val intervals = if (data.hasNext) intervalTree.range(prev_batch_timestamp, timesAccum.last) else intervalTree.range(prev_batch_timestamp, INF_TS)
+
+        timesAccum += prev_batch_timestamp
+
+        if (!data.hasNext) timesAccum += INF_TS
+
+        prev_batch_timestamp = timesAccum.last
+
+        var extras = timesAccum.flatMap{ timeStamp =>
+          val containedIn = intervals.filter(interval => (interval._3.stime < timeStamp && timeStamp < interval._3.etime))
           containedIn.map(x => HLEIntervalToAtom(x._3, timeStamp.toString, targetEvent))
         }
 
+        extras = extras ++ intervals.map((interval) => if (interval._3.stime >= timesAccum.head) HLEIntervalToAtom(interval._3, interval._3.stime.toString, targetEvent) else "None")
+        extras = extras ++ intervals.map((interval) => if (interval._3.etime <= timesAccum.last) HLEIntervalToAtom(interval._3, interval._3.etime.toString, targetEvent) else "None")
+
+        // Why this line is used?
         if (extras.nonEmpty) {
           val stop = "stop"
         }
@@ -93,13 +115,14 @@ object IntervalHandler extends App {
         for (x <- extras) currentBatch += x
         for (x <- nexts) currentBatch += x
 
-        //writeToFile.write(currentBatch.filter(x => x != "None").mkString(" ")+"\n")
+        writeToFile.write(currentBatch.filter(x => x != "None").mkString(" ") + "\n")
 
         println(batchCount)
         currentBatch.clear()
         timesAccum.clear()
       }
     }
+
     println(s"All batches: $batchCount")
     println(s"LLEs: $llesAccum")
     writeToFile.close()
@@ -108,7 +131,8 @@ object IntervalHandler extends App {
   // mode is either "asp" or "mln"
   def generateLLEInstances(line: String, mode: String) = {
     // These have a different schema
-    val abnormalLLEs = Set[String]("coord", "entersArea", "leavesArea", "proximity", "velocity")
+    // proximity is HLE
+    val abnormalLLEs = Set[String]("coord", "entersArea", "leavesArea", "velocity")
     val split = line.split("\\|")
     if (!abnormalLLEs.contains(split(0))) {
 
@@ -116,8 +140,8 @@ object IntervalHandler extends App {
       // change_in_heading, change_in_speed_start, change_in_speed_end,
       // gap_start, gap_end, slow_motion_start, slow_motion_end, stop_start, stop_end
       val lle = split(0)
-      val time = split(2)
-      val vessel = split(1)
+      val time = split(1)
+      val vessel = split(3)
       if (mode == "asp") s"happensAt($lle($vessel),$time)" else s"HappensAt(${lle.capitalize}_$vessel),$time)"
     } else {
 
@@ -134,12 +158,14 @@ object IntervalHandler extends App {
         */
         // do nothing (we won't use coord).
         "None"
-
       } else if (split(0) == "entersArea" || split(0) == "leavesArea") {
         //entersArea|1443875806|1443875806|228017700|18515
+        // For me enters and leaves are has the form
+        //['Fluent','Timestamp','Area_ID','Vessel_ID']
+
         val lle = split(0)
-        val time = split(3)
-        val vessel = split(1)
+        val time = split(1)
+        val vessel = split(3)
         val area = split(2)
         if (mode == "asp") s"happensAt($lle($vessel,$area),$time)"
         else s"HappensAt(${lle.capitalize}_${vessel}_$area,$time)"
@@ -149,12 +175,6 @@ object IntervalHandler extends App {
         // do nothing (we won't use velocity)
         "None"
 
-      } else if (split(0) == "proximity") {
-        val vessel1 = split(1)
-        val vessel2 = split(2)
-        val time = split(3)
-        if (mode == "asp") s"happensAt(close($vessel1,$vessel2),$time)"
-        else s"HappensAt(Close_${vessel1}_$vessel2,$time)"
       } else {
         throw new RuntimeException(s"Unexpected event: $line")
       }
@@ -180,7 +200,10 @@ object IntervalHandler extends App {
       def getListOfFiles(dir: String): List[File] = {
         val d = new File(dir)
         if (d.exists && d.isDirectory) {
-          d.listFiles.filter(f => f.isFile && interestedIn.exists(eventName => f.getName.contains(eventName))).toList
+          println(d.listFiles.toList)
+          d.listFiles.filter(f => f.isFile).toList
+          // This line does not suits me
+          // d.listFiles.filter(f => f.isFile && interestedIn.exists(eventName => f.getName.contains(eventName))).toList
         } else {
           List[File]()
         }
@@ -190,12 +213,18 @@ object IntervalHandler extends App {
 
     val intervalTree = new IntervalTree[HLEInterval]()
 
+    var counter = 0
     files foreach { file =>
       println(s"Updating interval tree from $file")
-      val data = Source.fromFile(file).getLines
+
+      val data = Source.fromFile(file).getLines.filter(line => interestedIn.contains(line.split("\\|")(0)))
+
       while (data.hasNext) {
         val newLine = data.next()
         val i = HLEInterval(newLine)
+
+        counter += 1
+
         intervalTree.addInterval(i.stime, i.etime, i)
       }
     }
